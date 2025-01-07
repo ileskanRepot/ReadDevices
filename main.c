@@ -4,8 +4,13 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <poll.h>
-#include <stdbool.h>
 #include <sys/time.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/shm.h>
+
+#define SHMSIZE 5
+#define SHMID 2000
 
 struct inputEvent {
 	struct timeval time;
@@ -14,7 +19,10 @@ struct inputEvent {
 	unsigned int value;
 };
 
-int main(int argc, char *argv[])
+enum charKeyCodes {rightCode = 32, leftCode = 30, upCode = 17, downCode = 31, exitCode = 16};
+enum listIndex {rightIndex = 0, leftIndex = 1, upIndex = 2, downIndex = 3, exitIndex = 4};
+
+void takeInput()
 {
 	int timeoutMs = 5000;
 	char inputDev[] = "/dev/input/event0";
@@ -22,12 +30,17 @@ int main(int argc, char *argv[])
 	int ret;
 	struct pollfd fds[1];
 
+	int shmid = shmget(SHMID, SHMSIZE, 0666 | IPC_CREAT);
+	char* shm = shmat(shmid, 0, 0);
+	shm[rightIndex] = 0;
+	shm[leftIndex] = 0;
+
 	fds[0].fd = open(inputDev, O_RDONLY|O_NONBLOCK);
 
 	if(fds[0].fd<0)
 	{
 		printf("error unable open for reading '%s'\n",inputDev);
-		return(0);
+		return;
 	}
 
 	const int inputSize = sizeof(struct inputEvent);
@@ -39,7 +52,7 @@ int main(int argc, char *argv[])
 
 	int exitOnKeyPressCount = 10;
 
-	while(true) {
+	while(1) {
 		ret = poll(fds, 1, timeoutMs);
 		if (ret <= 0){
 			printf("timeout\n");
@@ -57,14 +70,34 @@ int main(int argc, char *argv[])
 			printf("error %d\n",(int)r);
 			break;
 		}
-		printf("total bytes read %d/%d\n",(int)r,inputSize);
+		// printf("total bytes read %d/%d\n",(int)r,inputSize);
+		if (
+				(inputData->type == 0 && inputData->code == 0 && inputData->value == 0) 
+				|| (inputData->value == 2)
+				|| (inputData->type != 1)
+				// || (inputData->value == 2)
+				) {
+			continue;
+		}
+		// printf("type=%hu code=%hu value=%u\n", inputData->type, inputData->code, inputData->value);
 
-		printf("time=%ld.%06lu type=%hu code=%hu value=%u\n", inputData->time.tv_sec, inputData->time.tv_usec, inputData->type, inputData->code, inputData->value);
-		// for(int i = 0; i<r;i++)
-		// {
-			// printf("%02X ",(unsigned char)inputData[i]);
-		// }
-		// printf("\n");
+		switch (inputData->code) {
+			case rightCode:
+				shm[rightIndex] = inputData->value;
+				break;
+			case leftCode:
+				shm[leftIndex] = inputData->value;
+				break;
+			case upCode:
+				shm[upIndex] = inputData->value;
+				break;
+			case downCode:
+				shm[downIndex] = inputData->value;
+				break;
+			default:
+				break;
+		}
+
 		memset(inputData,0,inputSize);
 
 		exitOnKeyPressCount--;
@@ -73,5 +106,61 @@ int main(int argc, char *argv[])
 	}
 
 	close(fds[0].fd);
-	return 0;
+	return;
+}
+
+int physics() {
+	const int max = 10;
+	int shmid = shmget(SHMID, SHMSIZE, 0666 | IPC_CREAT);
+	char* shm = shmat(shmid, 0, SHM_RDONLY);
+
+	int playerPosX = 0;
+	int playerPosY = 0;
+	while (1){
+		// printf("Left %d Right %d\n", shm[leftIndex], shm[rightIndex]);
+
+		if (shm[leftIndex]){
+			if (playerPosX != 0)
+				playerPosX -= 1;
+		}
+		if (shm[rightIndex]){
+			if (playerPosX != max-1)
+				playerPosX += 1;
+		}
+		if (shm[upIndex]){
+			if (playerPosY != 0)
+				playerPosY -= 1;
+		}
+		if (shm[downIndex]){
+			if (playerPosY != max-1)
+				playerPosY += 1;
+		}
+
+		for (int yy = 0; yy < max;yy++){
+			for (int xx = 0; xx < max;xx++){
+				if (xx == playerPosX && yy == playerPosY){
+					printf("P");
+				}else{
+					printf("N");
+				}
+			}
+			printf("\n");
+		}
+		printf("\n");
+		usleep(0.1 * 1000 * 1000);
+	}
+}
+
+int main(int argc, char *argv[]) {
+	pid_t pp = fork();
+	if (pp < 0){
+		perror("Fork failed");
+		exit(1);
+	}
+
+	if (pp == 0){
+		takeInput();
+	}else{
+		physics();
+	}
 }
