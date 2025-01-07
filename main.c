@@ -7,10 +7,7 @@
 #include <sys/time.h>
 #include <stdlib.h>
 #include <sys/types.h>
-#include <sys/shm.h>
-
-#define SHMSIZE 5
-#define SHMID 2000
+#include <sys/mman.h>
 
 struct inputEvent {
 	struct timeval time;
@@ -22,7 +19,7 @@ struct inputEvent {
 enum charKeyCodes {rightCode = 32, leftCode = 30, upCode = 17, downCode = 31, exitCode = 16};
 enum listIndex {rightIndex = 0, leftIndex = 1, upIndex = 2, downIndex = 3, exitIndex = 4};
 
-void takeInput()
+void takeInput(char* shm)
 {
 	int timeoutMs = 5000;
 	char inputDev[] = "/dev/input/event0";
@@ -30,8 +27,7 @@ void takeInput()
 	int ret;
 	struct pollfd fds[1];
 
-	int shmid = shmget(SHMID, SHMSIZE, 0666 | IPC_CREAT);
-	char* shm = shmat(shmid, 0, 0);
+
 	shm[rightIndex] = 0;
 	shm[leftIndex] = 0;
 
@@ -109,15 +105,21 @@ void takeInput()
 	return;
 }
 
-int physics() {
+void printVec(char*vec, int size){
+	for (int ii = 0; ii<size; ii++){
+		printf("%d ", vec[ii]);
+	}
+	printf("\n");
+}
+
+void physics(char* shm) {
 	const int max = 10;
-	int shmid = shmget(SHMID, SHMSIZE, 0666 | IPC_CREAT);
-	char* shm = shmat(shmid, 0, SHM_RDONLY);
 
 	int playerPosX = 0;
 	int playerPosY = 0;
 	while (1){
 		// printf("Left %d Right %d\n", shm[leftIndex], shm[rightIndex]);
+		// printVec(shm, SHMSIZE);
 
 		if (shm[leftIndex]){
 			if (playerPosX != 0)
@@ -152,15 +154,29 @@ int physics() {
 }
 
 int main(int argc, char *argv[]) {
+	char* shmem = (char*)mmap(
+			NULL, 
+			8, 
+			PROT_READ | PROT_WRITE, 
+			MAP_SHARED | MAP_ANON, 
+			-1, 
+			0
+	);
+
 	pid_t pp = fork();
 	if (pp < 0){
 		perror("Fork failed");
 		exit(1);
 	}
 
+
 	if (pp == 0){
-		takeInput();
+		// usleep(0.1 * 1000 * 1000);
+		// printf("%p %d\n", shmem, *(char*)shmem);
+		physics(shmem);
 	}else{
-		physics();
+		// printf("%p %d\n", shmem, *(char*)shmem);
+		takeInput(shmem);
+		// usleep(0.1 * 1000 * 1000);
 	}
 }
